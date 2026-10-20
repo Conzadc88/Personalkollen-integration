@@ -31,7 +31,10 @@ def ottieni_turni_per_data(data_target):
         return None
 
 def alexa_response(testo):
-    """Formatta la risposta secondo lo standard richiesto da Amazon Alexa."""
+    """Formatta la risposta per Alexa garantendo che non superi mai il limite di 8000 caratteri."""
+    if len(testo) > 7000:
+        testo = testo[:6900] + "... Il resto dei turni è troppo lungo da leggere. Consulta l'app Personalkollen per i dettagli."
+    
     return jsonify({
         "version": "1.0",
         "response": {
@@ -44,7 +47,6 @@ def alexa_response(testo):
     })
 
 def crea_frase_turni(dati_json, giorno_str):
-    """Estrae nomi e orari creando una frase naturale per Alexa."""
     if not dati_json or "results" not in dati_json or not dati_json["results"]:
         return f"{giorno_str} non ci sono turni registrati."
     
@@ -54,14 +56,14 @@ def crea_frase_turni(dati_json, giorno_str):
         inizio = period.get("start_time", "")[:5]
         fine = period.get("end_time", "")[:5]
         if inizio and fine:
-            turni_list.append(f"{nome} dalle {inizio} alle {fine}")
+            turni_list.append(f"{nome} ({inizio}-{fine})")
         else:
             turni_list.append(nome)
     
     if not turni_list:
         return f"{giorno_str} non ci sono turni registrati."
     
-    return f"{giorno_str} lavorano: " + ", ".join(turni_list) + "."
+    return f"{giorno_str}: " + ", ".join(turni_list) + "."
 
 @app.route("/turni-oggi", methods=["GET", "POST"])
 def turni_oggi():
