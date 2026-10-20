@@ -6,6 +6,7 @@ from flask import Flask, jsonify, request
 app = Flask(__name__)
 
 API_TOKEN = os.environ.get("PERSONALKOLLEN_TOKEN")
+NOME_PERSONALE = "Nicolas"  # Filtra i turni per il tuo nome
 
 @app.route("/", methods=["GET"])
 def home():
@@ -49,9 +50,9 @@ def alexa_response(testo):
         }
     })
 
-def crea_frase_turni(dati_json, giorno_label, data_target):
+def crea_frase_turni(dati_json, giorno_label, data_target, solo_miei=False):
     if not dati_json or "results" not in dati_json or not dati_json["results"]:
-        return f"{giorno_label} non ci sono turni registrati."
+        return f"{giorno_label} non ci sono turni registrati." if not solo_miei else f"{giorno_label} non hai turni previsti."
     
     turni_set = set()
     turni_list = []
@@ -62,31 +63,36 @@ def crea_frase_turni(dati_json, giorno_label, data_target):
             continue
 
         nome = period.get("staff_name", "Un dipendente")
+        
+        # Se è una richiesta personale, scarta tutti gli altri dipendenti
+        if solo_miei and NOME_PERSONALE.lower() not in nome.lower():
+            continue
+
         inizio = period.get("start_time", "")[:5]
         fine = period.get("end_time", "")[:5]
         
-        item = f"{nome} ({inizio}-{fine})" if inizio and fine else nome
+        if solo_miei:
+            item = f"dalle {inizio} alle {fine}" if inizio and fine else "in turno"
+        else:
+            item = f"{nome} ({inizio}-{fine})" if inizio and fine else nome
             
         if item not in turni_set:
             turni_set.add(item)
             turni_list.append(item)
     
     if not turni_list:
-        return f"{giorno_label} non ci sono turni registrati."
+        return f"{giorno_label} non hai turni previsti." if solo_miei else f"{giorno_label} non ci sono turni registrati."
     
+    if solo_miei:
+        return f"{giorno_label} lavori " + " e ".join(turni_list) + "."
     return f"{giorno_label}: " + ", ".join(turni_list) + "."
 
-def genera_testo_oggi():
-    oggi = datetime.now().strftime("%Y-%m-%d")
-    dati = ottieni_turni_per_data(oggi)
-    return crea_frase_turni(dati, "Oggi", oggi)
+def genera_testo_giorno(delta_giorni, giorno_label, solo_miei=False):
+    data_target = (datetime.now() + timedelta(days=delta_giorni)).strftime("%Y-%m-%d")
+    dati = ottieni_turni_per_data(data_target)
+    return crea_frase_turni(dati, giorno_label, data_target, solo_miei=solo_miei)
 
-def genera_testo_domani():
-    domani = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-    dati = ottieni_turni_per_data(domani)
-    return crea_frase_turni(dati, "Domani", domani)
-
-def genera_testo_settimana():
+def genera_testo_settimana(solo_miei=False):
     oggi = datetime.now()
     giorni_settimana = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
     frasi_giorni = []
@@ -104,19 +110,25 @@ def genera_testo_settimana():
                 if period.get("date") != data_str:
                     continue
                 nome = period.get("staff_name", "")
+                
+                if solo_miei and NOME_PERSONALE.lower() not in nome.lower():
+                    continue
+
                 inizio = period.get("start_time", "")[:5]
-                item = f"{nome} alle {inizio}" if (nome and inizio) else nome
+                item = f"dalle {inizio}" if solo_miei else (f"{nome} alle {inizio}" if nome else "")
                 
                 if item and item not in turni_set:
                     turni_set.add(item)
                     turni_giorno.append(item)
                     
             if turni_giorno:
-                frasi_giorni.append(f"{nome_giorno}: " + ", ".join(turni_giorno))
+                frasi_giorni.append(f"{nome_giorno} " + ", ".join(turni_giorno))
         
     if not frasi_giorni:
-        return "Non ci sono turni registrati per i prossimi sette giorni."
-    return "Ecco i turni della settimana. " + ". ".join(frasi_giorni) + "."
+        return "Non hai turni previsti per i prossimi sette giorni." if solo_miei else "Non ci sono turni registrati per i prossimi sette giorni."
+    
+    prefisso = "Ecco i tuoi turni della settimana. " if solo_miei else "Ecco i turni della squadra per la settimana. "
+    return prefisso + ". ".join(frasi_giorni) + "."
 
 @app.route("/turni-oggi", methods=["GET", "POST"])
 @app.route("/turni-domani", methods=["GET", "POST"])
@@ -126,22 +138,18 @@ def gestisci_alexa():
         req_data = request.get_json(silent=True) or {}
         intent_name = req_data.get("request", {}).get("intent", {}).get("name", "").lower()
         
-        # Riconoscimento flessibile basato su parole chiave nell'intent
-        if "domani" in intent_name or "domani" in request.path:
-            return alexa_response(genera_testo_domani())
-        elif "settimana" in intent_name or "settimana" in request.path:
-            return alexa_response(genera_testo_settimana())
-        elif "oggi" in intent_name or "oggi" in request.path:
-            return alexa_response(genera_testo_oggi())
-        
-        return alexa_response(genera_testo_oggi())
+        # Riconoscimento se la richiesta è personale ("miei", "ho", "lavoro")
+        solo_miei = any(k in intent_name for k in ["mio", "miei", "ho", "personale"])
 
-    # Gestione richieste GET per test via Browser
-    if "domani" in request.path:
-        return jsonify({"success": True, "speech": genera_testo_domani()})
-    elif "settimana" in request.path:
-        return jsonify({"success": True, "speech": genera_testo_settimana()})
-    return jsonify({"success": True, "speech": genera_testo_oggi()})
+        if "domani" in intent_name or "domani" in request.path:
+            return alexa_response(genera_testo_giorno(1, "Domani", solo_miei=solo_miei))
+        elif "settimana" in intent_name or "settimana" in request.path:
+            return alexa_response(genera_testo_settimana(solo_miei=solo_miei))
+        else:
+            return alexa_response(genera_testo_giorno(0, "Oggi", solo_miei=solo_miei))
+
+    # Test via browser (GET)
+    return jsonify({"success": True, "speech": genera_testo_giorno(0, "Oggi")})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
