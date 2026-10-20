@@ -20,7 +20,6 @@ def ottieni_turni_per_data(data_target):
         "Authorization": f"Token {API_TOKEN}",
         "Accept": "application/json"
     }
-    # Passiamo sia date che start_date/end_date per filtrare correttamente l'API
     params = {
         "date": data_target,
         "start_date": data_target,
@@ -36,7 +35,6 @@ def ottieni_turni_per_data(data_target):
         return None
 
 def alexa_response(testo):
-    """Formatta la risposta per Alexa nei limiti previsti."""
     if len(testo) > 7000:
         testo = testo[:6900] + "... Consulta l'app Personalkollen per i dettagli completi."
     
@@ -59,7 +57,6 @@ def crea_frase_turni(dati_json, giorno_label, data_target):
     turni_list = []
 
     for period in dati_json.get("results", []):
-        # Filtro di sicurezza: scarta i turni che non appartengono alla data richiesta
         period_date = period.get("date", "")
         if period_date and period_date != data_target:
             continue
@@ -79,28 +76,17 @@ def crea_frase_turni(dati_json, giorno_label, data_target):
     
     return f"{giorno_label}: " + ", ".join(turni_list) + "."
 
-@app.route("/turni-oggi", methods=["GET", "POST"])
-def turni_oggi():
+def genera_testo_oggi():
     oggi = datetime.now().strftime("%Y-%m-%d")
     dati = ottieni_turni_per_data(oggi)
-    frase = crea_frase_turni(dati, "Oggi", oggi)
-    
-    if request.method == "POST":
-        return alexa_response(frase)
-    return jsonify({"success": True, "speech": frase})
+    return crea_frase_turni(dati, "Oggi", oggi)
 
-@app.route("/turni-domani", methods=["GET", "POST"])
-def turni_domani():
+def genera_testo_domani():
     domani = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
     dati = ottieni_turni_per_data(domani)
-    frase = crea_frase_turni(dati, "Domani", domani)
-    
-    if request.method == "POST":
-        return alexa_response(frase)
-    return jsonify({"success": True, "speech": frase})
+    return crea_frase_turni(dati, "Domani", domani)
 
-@app.route("/turni-settimana", methods=["GET", "POST"])
-def turni_settimana():
+def genera_testo_settimana():
     oggi = datetime.now()
     giorni_settimana = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
     frasi_giorni = []
@@ -129,13 +115,38 @@ def turni_settimana():
                 frasi_giorni.append(f"{nome_giorno}: " + ", ".join(turni_giorno))
         
     if not frasi_giorni:
-        frase = "Non ci sono turni registrati per i prossimi sette giorni."
-    else:
-        frase = "Ecco i turni della settimana. " + ". ".join(frasi_giorni) + "."
+        return "Non ci sono turni registrati per i prossimi sette giorni."
+    return "Ecco i turni della settimana. " + ". ".join(frasi_giorni) + "."
 
+@app.route("/turni-oggi", methods=["GET", "POST"])
+def gestisci_alexa():
     if request.method == "POST":
-        return alexa_response(frase)
-    return jsonify({"success": True, "speech": frase})
+        req_data = request.get_json(silent=True) or {}
+        intent_name = req_data.get("request", {}).get("intent", {}).get("name", "")
+        
+        if intent_name == "TurniDomaniIntent":
+            return alexa_response(genera_testo_domani())
+        elif intent_name == "TurniSettimanaIntent":
+            return alexa_response(genera_testo_settimana())
+        elif intent_name == "TurniOggiIntent":
+            return alexa_response(genera_testo_oggi())
+        
+        # Fallback predefinito se l'intent non è riconosciuto
+        return alexa_response(genera_testo_oggi())
+
+    return jsonify({"success": True, "speech": genera_testo_oggi()})
+
+@app.route("/turni-domani", methods=["GET", "POST"])
+def turni_domani():
+    if request.method == "POST":
+        return gestisci_alexa()
+    return jsonify({"success": True, "speech": genera_testo_domani()})
+
+@app.route("/turni-settimana", methods=["GET", "POST"])
+def turni_settimana():
+    if request.method == "POST":
+        return gestisci_alexa()
+    return jsonify({"success": True, "speech": genera_testo_settimana()})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
