@@ -119,34 +119,29 @@ def genera_testo_settimana():
     return "Ecco i turni della settimana. " + ". ".join(frasi_giorni) + "."
 
 @app.route("/turni-oggi", methods=["GET", "POST"])
+@app.route("/turni-domani", methods=["GET", "POST"])
+@app.route("/turni-settimana", methods=["GET", "POST"])
 def gestisci_alexa():
     if request.method == "POST":
         req_data = request.get_json(silent=True) or {}
-        intent_name = req_data.get("request", {}).get("intent", {}).get("name", "")
+        intent_name = req_data.get("request", {}).get("intent", {}).get("name", "").lower()
         
-        if intent_name == "TurniDomaniIntent":
+        # Riconoscimento flessibile basato su parole chiave nell'intent
+        if "domani" in intent_name or "domani" in request.path:
             return alexa_response(genera_testo_domani())
-        elif intent_name == "TurniSettimanaIntent":
+        elif "settimana" in intent_name or "settimana" in request.path:
             return alexa_response(genera_testo_settimana())
-        elif intent_name == "TurniOggiIntent":
+        elif "oggi" in intent_name or "oggi" in request.path:
             return alexa_response(genera_testo_oggi())
         
-        # Fallback predefinito se l'intent non è riconosciuto
         return alexa_response(genera_testo_oggi())
 
+    # Gestione richieste GET per test via Browser
+    if "domani" in request.path:
+        return jsonify({"success": True, "speech": genera_testo_domani()})
+    elif "settimana" in request.path:
+        return jsonify({"success": True, "speech": genera_testo_settimana()})
     return jsonify({"success": True, "speech": genera_testo_oggi()})
-
-@app.route("/turni-domani", methods=["GET", "POST"])
-def turni_domani():
-    if request.method == "POST":
-        return gestisci_alexa()
-    return jsonify({"success": True, "speech": genera_testo_domani()})
-
-@app.route("/turni-settimana", methods=["GET", "POST"])
-def turni_settimana():
-    if request.method == "POST":
-        return gestisci_alexa()
-    return jsonify({"success": True, "speech": genera_testo_settimana()})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
