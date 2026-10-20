@@ -20,7 +20,12 @@ def ottieni_turni_per_data(data_target):
         "Authorization": f"Token {API_TOKEN}",
         "Accept": "application/json"
     }
-    params = {"date": data_target}
+    # Passiamo sia date che start_date/end_date per filtrare correttamente l'API
+    params = {
+        "date": data_target,
+        "start_date": data_target,
+        "end_date": data_target
+    }
 
     try:
         response = requests.get(url, headers=headers, params=params, timeout=10)
@@ -31,9 +36,9 @@ def ottieni_turni_per_data(data_target):
         return None
 
 def alexa_response(testo):
-    """Formatta la risposta per Alexa garantendo che non superi mai il limite di 8000 caratteri."""
+    """Formatta la risposta per Alexa nei limiti previsti."""
     if len(testo) > 7000:
-        testo = testo[:6900] + "... Il resto dei turni è troppo lungo da leggere. Consulta l'app Personalkollen per i dettagli."
+        testo = testo[:6900] + "... Consulta l'app Personalkollen per i dettagli completi."
     
     return jsonify({
         "version": "1.0",
@@ -46,30 +51,39 @@ def alexa_response(testo):
         }
     })
 
-def crea_frase_turni(dati_json, giorno_str):
+def crea_frase_turni(dati_json, giorno_label, data_target):
     if not dati_json or "results" not in dati_json or not dati_json["results"]:
-        return f"{giorno_str} non ci sono turni registrati."
+        return f"{giorno_label} non ci sono turni registrati."
     
+    turni_set = set()
     turni_list = []
+
     for period in dati_json.get("results", []):
+        # Filtro di sicurezza: scarta i turni che non appartengono alla data richiesta
+        period_date = period.get("date", "")
+        if period_date and period_date != data_target:
+            continue
+
         nome = period.get("staff_name", "Un dipendente")
         inizio = period.get("start_time", "")[:5]
         fine = period.get("end_time", "")[:5]
-        if inizio and fine:
-            turni_list.append(f"{nome} ({inizio}-{fine})")
-        else:
-            turni_list.append(nome)
+        
+        item = f"{nome} ({inizio}-{fine})" if inizio and fine else nome
+            
+        if item not in turni_set:
+            turni_set.add(item)
+            turni_list.append(item)
     
     if not turni_list:
-        return f"{giorno_str} non ci sono turni registrati."
+        return f"{giorno_label} non ci sono turni registrati."
     
-    return f"{giorno_str}: " + ", ".join(turni_list) + "."
+    return f"{giorno_label}: " + ", ".join(turni_list) + "."
 
 @app.route("/turni-oggi", methods=["GET", "POST"])
 def turni_oggi():
     oggi = datetime.now().strftime("%Y-%m-%d")
     dati = ottieni_turni_per_data(oggi)
-    frase = crea_frase_turni(dati, "Oggi")
+    frase = crea_frase_turni(dati, "Oggi", oggi)
     
     if request.method == "POST":
         return alexa_response(frase)
@@ -79,7 +93,7 @@ def turni_oggi():
 def turni_domani():
     domani = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
     dati = ottieni_turni_per_data(domani)
-    frase = crea_frase_turni(dati, "Domani")
+    frase = crea_frase_turni(dati, "Domani", domani)
     
     if request.method == "POST":
         return alexa_response(frase)
@@ -97,15 +111,20 @@ def turni_settimana():
         nome_giorno = giorni_settimana[data_dt.weekday()]
         
         dati_giorno = ottieni_turni_per_data(data_str)
-        if dati_giorno and "results" in dati_giorno and dati_giorno["results"]:
+        if dati_giorno and "results" in dati_giorno:
             turni_giorno = []
+            turni_set = set()
             for period in dati_giorno["results"]:
+                if period.get("date") != data_str:
+                    continue
                 nome = period.get("staff_name", "")
                 inizio = period.get("start_time", "")[:5]
-                if nome and inizio:
-                    turni_giorno.append(f"{nome} alle {inizio}")
-                elif nome:
-                    turni_giorno.append(nome)
+                item = f"{nome} alle {inizio}" if (nome and inizio) else nome
+                
+                if item and item not in turni_set:
+                    turni_set.add(item)
+                    turni_giorno.append(item)
+                    
             if turni_giorno:
                 frasi_giorni.append(f"{nome_giorno}: " + ", ".join(turni_giorno))
         
